@@ -1,0 +1,87 @@
+apply plugin: 'maven'
+apply plugin: 'signing'
+// Gradle tasks for publishing to maven
+// 1) To install in local maven repo use :installArchives task
+// 2) To upload artifact to maven central use: :uploadArchives (you'd need to have the permission to do that)
+def isReleaseBuild() {
+    return VERSION_NAME.contains('SNAPSHOT') == false
+}
+def getRepositoryUrl() {
+    return 'http://sdklib.bojoy.net/repository/maven-releases/'
+}
+def getRepositoryUsername() {
+    return 'admin'
+}
+def getRepositoryPassword() {
+    return 'admin123'
+}
+def configurePublishPom(def pom) {
+    pom.project {
+        name POM_NAME
+        artifactId POM_ARTIFACT_ID
+        packaging POM_PACKAGING
+        description 'bjm-roundtable'
+        developers {
+            developer {
+                id 'bojoy'
+                name 'bojoy'
+            }
+        }
+    }
+}
+afterEvaluate { project ->
+    task androidJavadoc(type: Javadoc) {
+        source = android.sourceSets.main.java.srcDirs
+        classpath += files(android.bootClasspath)
+        classpath += files(project.getConfigurations().getByName('compile').asList())
+        include '**/*.java'
+    }
+    task androidJavadocJar(type: Jar, dependsOn: androidJavadoc) {
+        classifier = 'javadoc'
+        from androidJavadoc.destinationDir
+    }
+    task androidSourcesJar(type: Jar) {
+        classifier = 'sources'
+        from android.sourceSets.main.java.srcDirs
+        include '**/*.java'
+    }
+    android.libraryVariants.all { variant ->
+        def name = variant.name.capitalize()
+        task "jar${name}"(type: Jar, dependsOn: variant.javaCompile) {
+            from variant.javaCompile.destinationDir
+        }
+    }
+    artifacts {
+        archives androidSourcesJar
+        // TODO Make Javadoc generation work with Java 1.8, currently only works with 1.7
+        // archives androidJavadocJar
+    }
+    version = VERSION_NAME
+    group = GROUP
+    signing {
+        required { isReleaseBuild() && gradle.taskGraph.hasTask('uploadArchives') }
+        sign configurations.archives
+    }
+    uploadArchives {
+        configuration = configurations.archives
+        repositories.mavenDeployer {
+            beforeDeployment {
+                MavenDeployment deployment -> signing.signPom(deployment)
+            }
+            repository(url: getRepositoryUrl()) {
+                authentication(
+                        userName: getRepositoryUsername(),
+                        password: getRepositoryPassword())
+            }
+            configurePublishPom pom
+        }
+    }
+    task installArchives(type: Upload) {
+        configuration = configurations.archives
+        repositories.mavenDeployer {
+            // Deploy to bjm-engine-compact/android, ready to publish to npm
+            repository url: "file://${projectDir}/../../../../android"
+            configurePublishPom pom
+        }
+    }
+}
